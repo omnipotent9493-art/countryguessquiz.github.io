@@ -231,13 +231,15 @@
   }
 
   // ====== 지도 초기화 ======
-  const defaultStyle = { weight: 0.7, color: "#999", fillColor: "#dfe7ef", fillOpacity: 0.7 };
-  const highlightStyle = { weight: 2, color: "#111", fillColor: HIGHLIGHT_COLOR, fillOpacity: 0.7 };
+  const defaultStyle   = { weight: 0.9, color: "#8a8a8a", fillColor: "#dfe7ef", fillOpacity: 0.82 };
+  const highlightStyle = { weight: 2,   color: "#111",   fillColor: HIGHLIGHT_COLOR, fillOpacity: 0.76 };
 
   function initMap() {
     map = L.map("map", { zoomSnap: 0.1, worldCopyJump: false, minZoom: 1.5 });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: "&copy; OpenStreetMap"
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap &copy; CARTO',
+      subdomains: 'abcd',
+      maxZoom: 19
     }).addTo(map);
     map.setView([20, 0], 2);
   }
