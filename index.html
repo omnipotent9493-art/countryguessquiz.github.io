@@ -90,62 +90,39 @@ const questionEl  = document.getElementById("question");
 const korCache  = new Map();   // 영문국가명 -> 한글국가명
 const infoCache = new Map();   // 영문국가명 -> { capital, region, cca2 }
 const nameFix = {
-  // 흔한 이름 불일치 교정
-  "South Korea":"Korea (Republic of)",
-  "North Korea":"Korea (Democratic People's Republic of)",
-  "USA":"United States",
-  "Russia":"Russian Federation",
-  "Iran":"Iran (Islamic Republic of)",
-  "Vietnam":"Viet Nam",
-  "Congo (Kinshasa)":"Democratic Republic of the Congo",
-  "Congo (Brazzaville)":"Republic of the Congo",
-  "Ivory Coast":"Côte d'Ivoire",
-  "Eswatini (Swaziland)":"Eswatini",
-  "Syria":"Syrian Arab Republic",
-  "Tanzania":"Tanzania, United Republic of",
-  "Moldova":"Moldova, Republic of",
-  "Vatican":"Holy See",
-  "Laos":"Lao People's Democratic Republic",
-  "Palestine":"Palestine, State of",
-  "Cape Verde":"Cabo Verde",
-  "Micronesia":"Micronesia (Federated States of)",
-  "Türkiye":"Turkey"
-const nameFix = {
-  // --- 기존 항목들 유지 ---
-  "South Korea":"Korea (Republic of)",
-  "North Korea":"Korea (Democratic People's Republic of)",
-  "USA":"United States",
-  "Russia":"Russian Federation",
-  "Iran":"Iran (Islamic Republic of)",
-  "Vietnam":"Viet Nam",
-  "Congo (Kinshasa)":"Democratic Republic of the Congo",
-  "Congo (Brazzaville)":"Republic of the Congo",
-  "Ivory Coast":"Côte d'Ivoire",
-  "Eswatini (Swaziland)":"Eswatini",
-  "Syria":"Syrian Arab Republic",
-  "Tanzania":"Tanzania, United Republic of",
-  "Moldova":"Moldova, Republic of",
-  "Vatican":"Holy See",
-  "Laos":"Lao People's Democratic Republic",
-  "Palestine":"Palestine, State of",
-  "Cape Verde":"Cabo Verde",
-  "Micronesia":"Micronesia (Federated States of)",
-  "Türkiye":"Turkey",
+  "South Korea": "Korea (Republic of)",
+  "North Korea": "Korea (Democratic People's Republic of)",
+  "USA": "United States",
+  "Russia": "Russian Federation",
+  "Iran": "Iran (Islamic Republic of)",
+  "Vietnam": "Viet Nam",
+  "Congo (Kinshasa)": "Democratic Republic of the Congo",
+  "Congo (Brazzaville)": "Republic of the Congo",
+  "Ivory Coast": "Côte d'Ivoire",
+  "Eswatini (Swaziland)": "Eswatini",
+  "Syria": "Syrian Arab Republic",
+  "Tanzania": "Tanzania, United Republic of",
+  "Moldova": "Moldova, Republic of",
+  "Vatican": "Holy See",
+  "Laos": "Lao People's Democratic Republic",
+  "Palestine": "Palestine, State of",
+  "Cape Verde": "Cabo Verde",
+  "Micronesia": "Micronesia (Federated States of)",
+  "Türkiye": "Turkey",
 
-  // --- ↓↓↓ world-atlas 약칭 보정 추가 ↓↓↓ ---
-  "Dem. Rep. Congo": "Democratic Republic of the Congo", // ← 지금 404난 주범
-  "Congo": "Republic of the Congo",                       // atlas에서 'Congo'는 보통 ROC
+  /* === 추가한 애들 === */
+  "Dem. Rep. Congo": "Democratic Republic of the Congo",
+  "Congo": "Republic of the Congo",
   "Eq. Guinea": "Equatorial Guinea",
   "Central African Rep.": "Central African Republic",
   "Bosnia and Herz.": "Bosnia and Herzegovina",
   "Solomon Is.": "Solomon Islands",
   "S. Sudan": "South Sudan",
   "W. Sahara": "Western Sahara",
-  "Timor-Leste": "Timor-Leste",           // REST Countries 표기 유지(동티모르)
   "Swaziland": "Eswatini",
   "Burma": "Myanmar",
   "Macedonia": "North Macedonia",
-  "Côte d’Ivoire": "Côte d'Ivoire"        // 꼬마따옴표/큰따옴표 혼용 보정
+  "Côte d’Ivoire": "Côte d'Ivoire"
 };
 
 };
