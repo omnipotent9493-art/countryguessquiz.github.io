@@ -73,211 +73,317 @@
   <script src="https://unpkg.com/topojson-client@3"></script>
 
   <script>
-    // ====== 설정값 ======
-    const TOTAL_QUESTIONS = 10;      // 한 판에 낼 문제 수
-    const CHOICES_COUNT   = 4;       // 보기 개수
-    const HIGHLIGHT_COLOR = "#ff5722";
+  // ====== 설정값 ======
+  const TOTAL_QUESTIONS = 10;      // 한 판에 낼 문제 수
+  const CHOICES_COUNT   = 4;       // 보기 개수
+  const HIGHLIGHT_COLOR = "#ff5722";
 
-    // ====== 전역 상태 ======
-    let map, countryLayer;
-    let allFeatures = [];            // {feature, name, continent, id}
-    let remainingIds = [];           // 아직 안 낸 국가 id 목록
-    let current = null;              // 현재 문제 {id, name, continent, layer}
-    let score = 0, round = 0, streak = 0;
+  // ====== 한글 번역 캐시 & 오버라이드 ======
+  const korCache = new Map(); // nameEng -> nameKor
+  const overrides = {
+    "South Korea": "대한민국",
+    "North Korea": "북한",
+    "United States of America": "미국",
+    "United States": "미국",
+    "United Kingdom": "영국",
+    "Russia": "러시아",
+    "Russian Federation": "러시아",
+    "China": "중국",
+    "Japan": "일본",
+    "Germany": "독일",
+    "France": "프랑스",
+    "Italy": "이탈리아",
+    "Spain": "스페인",
+    "Portugal": "포르투갈",
+    "Netherlands": "네덜란드",
+    "Belgium": "벨기에",
+    "Switzerland": "스위스",
+    "Austria": "오스트리아",
+    "Czechia": "체코",
+    "Poland": "폴란드",
+    "Hungary": "헝가리",
+    "Romania": "루마니아",
+    "Bulgaria": "불가리아",
+    "Greece": "그리스",
+    "Turkey": "튀르키예",
+    "Ukraine": "우크라이나",
+    "Finland": "핀란드",
+    "Norway": "노르웨이",
+    "Sweden": "스웨덴",
+    "Denmark": "덴마크",
+    "Ireland": "아일랜드",
+    "Canada": "캐나다",
+    "Mexico": "멕시코",
+    "Brazil": "브라질",
+    "Argentina": "아르헨티나",
+    "Chile": "칠레",
+    "Peru": "페루",
+    "Colombia": "콜롬비아",
+    "Australia": "오스트레일리아",
+    "New Zealand": "뉴질랜드",
+    "India": "인도",
+    "Pakistan": "파키스탄",
+    "Bangladesh": "방글라데시",
+    "Indonesia": "인도네시아",
+    "Vietnam": "베트남",
+    "Thailand": "태국",
+    "Philippines": "필리핀",
+    "Malaysia": "말레이시아",
+    "Singapore": "싱가포르",
+    "Saudi Arabia": "사우디아라비아",
+    "United Arab Emirates": "아랍에미리트",
+    "Iran": "이란",
+    "Iraq": "이라크",
+    "Israel": "이스라엘",
+    "Egypt": "이집트",
+    "South Africa": "남아프리카공화국",
+    "Morocco": "모로코",
+    "Algeria": "알제리",
+    "Ethiopia": "에티오피아",
+    "Nigeria": "나이지리아",
+    "Kenya": "케냐",
+  };
 
-    // ====== UI 참조 ======
-    const scoreBadge   = document.getElementById("scoreBadge");
-    const roundBadge   = document.getElementById("roundBadge");
-    const streakBadge  = document.getElementById("streakBadge");
-    const progressBar  = document.getElementById("progressBar");
-    const choicesEl    = document.getElementById("choices");
-    const resultEl     = document.getElementById("result");
-    const hintArea     = document.getElementById("hintArea");
-    const btnHint      = document.getElementById("btnHint");
-    const btnNext      = document.getElementById("btnNext");
-    const btnRestart   = document.getElementById("btnRestart");
-    const questionEl   = document.getElementById("question");
+  const continentKor = {
+    "Africa": "아프리카",
+    "Asia": "아시아",
+    "Europe": "유럽",
+    "Oceania": "오세아니아",
+    "North America": "북아메리카",
+    "South America": "남아메리카",
+    "Antarctica": "남극"
+  };
 
-    // ====== 유틸 ======
-    const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
-    const sample  = (arr, n) => shuffle(arr.slice()).slice(0, n);
-
-    function updateBadges() {
-      scoreBadge.textContent  = `점수 ${score}`;
-      roundBadge.textContent  = `문제 ${round} / ${TOTAL_QUESTIONS}`;
-      streakBadge.textContent = `연속정답 ${streak}`;
-      progressBar.style.width = `${(round / TOTAL_QUESTIONS) * 100}%`;
+  async function getKorName(nameEng) {
+    if (!nameEng) return null;
+    if (korCache.has(nameEng)) return korCache.get(nameEng);
+    if (overrides[nameEng]) {
+      korCache.set(nameEng, overrides[nameEng]);
+      return overrides[nameEng];
     }
-
-    function setResult(text, ok) {
-      resultEl.textContent = text;
-      resultEl.style.color = ok ? "#0a7d2b" : "#c62828";
-    }
-
-    function resetStyles() {
-      countryLayer.setStyle(defaultStyle);
-    }
-
-    // ====== 지도 초기화 ======
-    const defaultStyle = {
-      weight: 0.7, color: "#999",
-      fillColor: "#dfe7ef", fillOpacity: 0.7
-    };
-
-    const highlightStyle = {
-      weight: 2, color: "#111",
-      fillColor: HIGHLIGHT_COLOR, fillOpacity: 0.7
-    };
-
-    function initMap() {
-      map = L.map("map", { zoomSnap: 0.1, worldCopyJump: false, minZoom: 1.5 });
-      // 베이스(그레이 캔버스 느낌)
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: "&copy; OpenStreetMap"
-      }).addTo(map);
-      map.setView([20, 0], 2);
-    }
-
-    async function loadData() {
-      // world-atlas TopoJSON → GeoJSON 변환
-      const topo = await fetch("https://unpkg.com/world-atlas@2/countries-110m.json").then(r => r.json());
-      const geo  = topojson.feature(topo, topo.objects.countries);
-
-      // 일부 배포본은 country name이 별도 테이블로 분리돼 있음
-      // 여기서는 국가명 매핑용 테이블을 추가로 불러옴
-      // source: https://unpkg.com/world-atlas@2/ (names-110m.json)
-      let idToName = {};
-      try {
-        const names = await fetch("https://unpkg.com/world-atlas@2/world/110m.json").then(r => r.json());
-        // world/110m.json에는 countries, land 등 포함
-        // countries 배열에 {id, name}가 포함된 변형본이 있어 이를 우선 시도
-        if (names.countries && Array.isArray(names.countries)) {
-          names.countries.forEach(c => { if (c.id != null && c.name) idToName[String(c.id)] = c.name; });
+    // REST Countries로 시도 (CORS 허용됨)
+    try {
+      // 1) fullText 우선
+      let url = `https://restcountries.com/v3.1/name/${encodeURIComponent(nameEng)}?fullText=true&fields=name,translations`;
+      let res = await fetch(url);
+      if (!res.ok) {
+        // 2) 부분 매칭 fallback
+        url = `https://restcountries.com/v3.1/name/${encodeURIComponent(nameEng)}?fields=name,translations`;
+        res = await fetch(url);
+      }
+      if (res.ok) {
+        const data = await res.json();
+        const hit = Array.isArray(data) ? data.find(d => d?.name?.common) : null;
+        const kor = hit?.translations?.kor?.common
+          || hit?.translations?.kor?.official
+          || overrides[nameEng]
+          || hit?.name?.common;
+        if (kor) {
+          korCache.set(nameEng, kor);
+          return kor;
         }
-      } catch(e) {
-        // fallback: 그냥 id 문자열 그대로 쓰되, 나중에 걸러짐
       }
-
-      countryLayer = L.geoJSON(geo, {
-        style: defaultStyle,
-        onEachFeature: (feature, layer) => {
-          const id   = String(feature.id ?? (feature.properties && feature.properties.id) ?? "");
-          const name = feature.properties && (feature.properties.name || feature.properties.name_long || feature.properties.admin);
-          const finalName = name || idToName[id] || null;
-
-          if (!finalName) return; // 이름 없는 경우 스킵
-          const rec = {
-            id, name: finalName, continent: feature.properties && (feature.properties.continent || feature.properties.region_un || ""),
-            feature, layer
-          };
-          allFeatures.push(rec);
-        }
-      }).addTo(map);
-
-      // 남극, 영해 등 학습용 제외(이름 기준 대강 필터)
-      allFeatures = allFeatures.filter(r =>
-        r.name && !/antarctica/i.test(r.name) && r.name.length >= 3
-      );
-
-      remainingIds = allFeatures.map(r => r.id);
+    } catch (e) {
+      // 네트워크 실패 시 무시하고 영문 유지
     }
+    korCache.set(nameEng, nameEng); // 마지막 fallback
+    return nameEng;
+  }
 
-    function fitAndHighlight(rec) {
-      resetStyles();
-      rec.layer.setStyle(highlightStyle);
-      try {
-        const bounds = rec.layer.getBounds();
-        map.fitBounds(bounds.pad(0.5), { animate: true, duration: 0.6 });
-      } catch (e) {
-        // MultiPolygon이 너무 작으면 기본 줌
-        map.setView([20, 0], 2);
+  // ====== 전역 상태 ======
+  let map, countryLayer;
+  let allFeatures = [];            // {id, nameEng, nameKor, continent, layer}
+  let remainingIds = [];
+  let current = null;
+  let score = 0, round = 0, streak = 0;
+
+  // ====== UI 참조 ======
+  const scoreBadge   = document.getElementById("scoreBadge");
+  const roundBadge   = document.getElementById("roundBadge");
+  const streakBadge  = document.getElementById("streakBadge");
+  const progressBar  = document.getElementById("progressBar");
+  const choicesEl    = document.getElementById("choices");
+  const resultEl     = document.getElementById("result");
+  const hintArea     = document.getElementById("hintArea");
+  const btnHint      = document.getElementById("btnHint");
+  const btnNext      = document.getElementById("btnNext");
+  const btnRestart   = document.getElementById("btnRestart");
+  const questionEl   = document.getElementById("question");
+
+  // ====== 유틸 ======
+  const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+  const sample  = (arr, n) => shuffle(arr.slice()).slice(0, n);
+
+  function updateBadges() {
+    scoreBadge.textContent  = `점수 ${score}`;
+    roundBadge.textContent  = `문제 ${round} / ${TOTAL_QUESTIONS}`;
+    streakBadge.textContent = `연속정답 ${streak}`;
+    progressBar.style.width = `${(round / TOTAL_QUESTIONS) * 100}%`;
+  }
+
+  function setResult(text, ok) {
+    resultEl.textContent = text;
+    resultEl.style.color = ok ? "#0a7d2b" : "#c62828";
+  }
+
+  function resetStyles() {
+    if (countryLayer) countryLayer.setStyle(defaultStyle);
+  }
+
+  // ====== 지도 초기화 ======
+  const defaultStyle = { weight: 0.7, color: "#999", fillColor: "#dfe7ef", fillOpacity: 0.7 };
+  const highlightStyle = { weight: 2, color: "#111", fillColor: HIGHLIGHT_COLOR, fillOpacity: 0.7 };
+
+  function initMap() {
+    map = L.map("map", { zoomSnap: 0.1, worldCopyJump: false, minZoom: 1.5 });
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+    map.setView([20, 0], 2);
+  }
+
+  async function loadData() {
+    const topo = await fetch("https://unpkg.com/world-atlas@2/countries-110m.json").then(r => r.json());
+    const geo  = topojson.feature(topo, topo.objects.countries);
+
+    let idToName = {};
+    try {
+      const names = await fetch("https://unpkg.com/world-atlas@2/world/110m.json").then(r => r.json());
+      if (names.countries && Array.isArray(names.countries)) {
+        names.countries.forEach(c => { if (c.id != null && c.name) idToName[String(c.id)] = c.name; });
       }
-    }
+    } catch(e) {}
 
-    function nextQuestion() {
-      if (round >= TOTAL_QUESTIONS || remainingIds.length === 0) {
-        finish();
-        return;
-      }
-      round++;
-      updateBadges();
-      resultEl.textContent = "";
-      btnNext.disabled = true;
-
-      // 후보 중 하나를 뽑음
-      const pickId = remainingIds.splice(Math.floor(Math.random() * remainingIds.length), 1)[0];
-      const rec = allFeatures.find(r => r.id === pickId);
-      current = rec;
-
-      // 보기 생성 (정답 + 랜덤 오답 n-1)
-      const others = allFeatures.filter(r => r.id !== rec.id);
-      const distractors = sample(others, CHOICES_COUNT - 1);
-      const options = shuffle([rec, ...distractors]).map(r => r.name);
-
-      // 지도 강조 & UI 그리기
-      fitAndHighlight(rec);
-      questionEl.textContent = "이 나라가 어디일까요?";
-      renderChoices(options, rec.name);
-
-      // 힌트 영역 초기화
-      hintArea.textContent = "힌트: 대륙 힌트 보이기 🔍";
-    }
-
-    function renderChoices(options, answerName) {
-      choicesEl.innerHTML = "";
-      options.forEach(opt => {
-        const btn = document.createElement("button");
-        btn.className = "choice";
-        btn.textContent = opt;
-        btn.onclick = () => {
-          Array.from(document.querySelectorAll("button.choice")).forEach(b => b.disabled = true);
-          const correct = (opt === answerName);
-          if (correct) {
-            score += 10;
-            streak += 1;
-            setResult(`정답! ✅ ${answerName}`, true);
-          } else {
-            streak = 0;
-            setResult(`오답! ❌ 정답은 ${answerName}`, false);
-          }
-          updateBadges();
-          btnNext.disabled = false;
+    countryLayer = L.geoJSON(geo, {
+      style: defaultStyle,
+      onEachFeature: (feature, layer) => {
+        const id   = String(feature.id ?? (feature.properties && feature.properties.id) ?? "");
+        const name = feature.properties && (feature.properties.name || feature.properties.name_long || feature.properties.admin);
+        const finalName = name || idToName[id] || null;
+        if (!finalName) return;
+        const rec = {
+          id,
+          nameEng: finalName,
+          nameKor: null, // 나중에 채울 것
+          continent: feature.properties && (feature.properties.continent || feature.properties.region_un || ""),
+          feature,
+          layer
         };
-        choicesEl.appendChild(btn);
-      });
-    }
+        allFeatures.push(rec);
+      }
+    }).addTo(map);
 
-    function finish() {
-      resetStyles();
+    allFeatures = allFeatures.filter(r =>
+      r.nameEng && !/antarctica/i.test(r.nameEng) && r.nameEng.length >= 3
+    );
+
+    remainingIds = allFeatures.map(r => r.id);
+  }
+
+  function fitAndHighlight(rec) {
+    resetStyles();
+    rec.layer.setStyle(highlightStyle);
+    try {
+      const bounds = rec.layer.getBounds();
+      map.fitBounds(bounds.pad(0.5), { animate: true, duration: 0.6 });
+    } catch (e) {
       map.setView([20, 0], 2);
-      questionEl.textContent = "게임 종료!";
-      choicesEl.innerHTML = "";
-      setResult(`최종 점수: ${score}점 / 최대 ${TOTAL_QUESTIONS * 10}점`, true);
-      btnNext.disabled = true;
     }
+  }
 
-    function restart() {
-      score = 0; round = 0; streak = 0;
-      remainingIds = allFeatures.map(r => r.id);
-      updateBadges();
-      nextQuestion();
+  async function nextQuestion() {
+    if (round >= TOTAL_QUESTIONS || remainingIds.length === 0) {
+      finish();
+      return;
     }
+    round++;
+    updateBadges();
+    resultEl.textContent = "";
+    btnNext.disabled = true;
 
-    // ====== 이벤트 바인딩 ======
-    btnNext.onclick = nextQuestion;
-    btnRestart.onclick = () => restart();
-    btnHint.onclick = () => {
-      if (!current) return;
-      const text = current.continent ? `대륙: ${current.continent}` : "대륙 정보 없음";
-      hintArea.textContent = `힌트: ${text}`;
-    };
+    const pickId = remainingIds.splice(Math.floor(Math.random() * remainingIds.length), 1)[0];
+    const rec = allFeatures.find(r => r.id === pickId);
+    current = rec;
 
-    // ====== 런타임 시작 ======
-    (async function main() {
-      initMap();
-      await loadData();
-      restart();
-    })();
-  </script>
+    // 보기 구성: 정답 + 오답
+    const others = allFeatures.filter(r => r.id !== rec.id);
+    const distractors = sample(others, CHOICES_COUNT - 1);
+
+    // 필요한 영문 이름들 → 한글 변환 (동시에 요청)
+    const need = [rec, ...distractors];
+    const korNames = await Promise.all(
+      need.map(x => getKorName(x.nameEng))
+    );
+
+    // nameKor 채워두기
+    korNames.forEach((k, i) => { need[i].nameKor = k; });
+
+    const options = shuffle(need).map(x => ({ key: x.nameEng, label: x.nameKor || x.nameEng }));
+
+    fitAndHighlight(rec);
+    questionEl.textContent = "이 나라가 어디일까요?";
+    renderChoices(options, rec.nameEng);
+
+    hintArea.textContent = `힌트: 대륙 힌트 보이기 🔍`;
+  }
+
+  function renderChoices(options, answerKeyEng) {
+    choicesEl.innerHTML = "";
+    options.forEach(opt => {
+      const btn = document.createElement("button");
+      btn.className = "choice";
+      btn.textContent = opt.label;      // 화면엔 한글
+      btn.dataset.key = opt.key;        // 비교는 영문 키로
+      btn.onclick = () => {
+        Array.from(document.querySelectorAll("button.choice")).forEach(b => b.disabled = true);
+        const correct = (btn.dataset.key === answerKeyEng);
+        if (correct) {
+          score += 10;
+          streak += 1;
+          setResult(`정답! ✅ ${opt.label}`, true);
+        } else {
+          streak = 0;
+          // 정답 표시를 한글로
+          getKorName(answerKeyEng).then(k => setResult(`오답! ❌ 정답은 ${k}`, false));
+        }
+        updateBadges();
+        btnNext.disabled = false;
+      };
+      choicesEl.appendChild(btn);
+    });
+  }
+
+  function finish() {
+    resetStyles();
+    map.setView([20, 0], 2);
+    questionEl.textContent = "게임 종료!";
+    choicesEl.innerHTML = "";
+    setResult(`최종 점수: ${score}점 / 최대 ${TOTAL_QUESTIONS * 10}점`, true);
+    btnNext.disabled = true;
+  }
+
+  function restart() {
+    score = 0; round = 0; streak = 0;
+    remainingIds = allFeatures.map(r => r.id);
+    updateBadges();
+    nextQuestion();
+  }
+
+  // 이벤트
+  btnNext.onclick = nextQuestion;
+  btnRestart.onclick = () => restart();
+  btnHint.onclick = () => {
+    if (!current) return;
+    const k = continentKor[current.continent] || current.continent || "정보 없음";
+    hintArea.textContent = `힌트: 대륙 = ${k}`;
+  };
+
+  // 시작
+  (async function main() {
+    initMap();
+    await loadData();
+    restart();
+  })();
+</script>
 </body>
 </html>
