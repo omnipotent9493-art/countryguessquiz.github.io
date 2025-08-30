@@ -247,12 +247,19 @@
   function initMap() {
     map = L.map("map", { zoomSnap: 0.1, worldCopyJump: false, minZoom: 1.5 });
     // 라벨 없는 밝은 회색
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-    }).addTo(map);
-    map.setView([20, 0], 2);
-  }
+        renderer: L.svg(),        // ← 추가: 반드시 SVG로
+        zoomSnap: 0.1, 
+        worldCopyJump: false, 
+        minZoom: 1.5 
+  });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    subdomains: 'abcd',
+    maxZoom: 19
+  }).addTo(map);
 
+  map.setView([20, 0], 2);
+}
   async function loadData() {
     const topo = await fetch("https://unpkg.com/world-atlas@2/countries-110m.json").then(r => r.json());
     const geo  = topojson.feature(topo, topo.objects.countries);
@@ -287,49 +294,95 @@
   }
 
   // ====== 국기 채우기 (leaflet.pattern 없이도 동작하게 구현) ======
-  async function fillWithFlag(rec) {
+ // 레이어 내 path 렌더 완료 대기
+function waitForPaths(rec) {
+  return new Promise(resolve => {
+    const tick = () => {
+      const el = rec.layer.getElement?.();
+      const paths = el && el.querySelectorAll?.('path');
+      if (paths && paths.length) resolve({ el, paths });
+      else requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
+// 좌표 무게중심(폴백용)
+function getCentroidLatLng(rec) {
+  try { return rec.layer.getBounds().getCenter(); } catch { return map.getCenter(); }
+}
+
+async function fillWithFlag(rec) {
+  try {
+    const { flagPng } = await getCountryInfo(rec.nameEng);
+    if (!flagPng) throw new Error('no-flag');
+
+    // 1) 레이어 path가 만들어질 때까지 대기
+    const { el: groupEl } = await waitForPaths(rec);
+
+    // 2) 깃발 이미지 CORS 안전하게 blob으로 받기
+    const resp = await fetch(flagPng, { mode: 'cors' });
+    if (!resp.ok) throw new Error('flag-fetch-failed');
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    // 3) SVG 및 <defs> 참조
+    const pane = map.getPane('overlayPane');
+    const svg  = pane.querySelector('svg');
+    if (!svg) throw new Error('no-svg');
+
+    let defs = svg.querySelector('defs');
+    if (!defs) {
+      defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      svg.prepend(defs);
+    }
+
+    // 4) 폴리곤 BBox 기준으로 패턴 생성 (userSpaceOnUse → 왜곡 최소화)
+    const bbox  = groupEl.getBBox();
+    const patId = `flagpat-${Math.random().toString(36).slice(2)}`;
+
+    const pat = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+    pat.setAttribute('id', patId);
+    pat.setAttribute('patternUnits', 'userSpaceOnUse');
+    pat.setAttribute('x', bbox.x);
+    pat.setAttribute('y', bbox.y);
+    pat.setAttribute('width', bbox.width);
+    pat.setAttribute('height', bbox.height);
+
+    const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', blobUrl);
+    img.setAttribute('x', bbox.x);
+    img.setAttribute('y', bbox.y);
+    img.setAttribute('width', bbox.width);
+    img.setAttribute('height', bbox.height);
+    img.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+
+    pat.appendChild(img);
+    defs.appendChild(pat);
+
+    // 5) 실제 경로에 패턴 적용
+    const paths = groupEl.querySelectorAll('path');
+    paths.forEach(p => {
+      p.setAttribute('fill', `url(#${patId})`);
+      p.setAttribute('stroke', '#111');
+      p.setAttribute('stroke-width', '2');
+    });
+  } catch (e) {
+    // 폴백: 국기 마커라도 찍어주기
     try {
       const { flagPng } = await getCountryInfo(rec.nameEng);
-      if (!flagPng) return;
-
-      // SVG 패턴을 직접 주입해서 안정적으로 적용 (플러그인 의존 X)
-      const svgId = `flagpat-${Math.random().toString(36).slice(2)}`;
-      const fillUrl = `url(#${svgId})`;
-
-      // 레이어의 내부 SVG 루트 취득
-      const pane = map.getPane('overlayPane');
-      const svg  = pane.querySelector('svg');
-      if (!svg) return;
-
-      // <defs> 확보
-      let defs = svg.querySelector('defs');
-      if (!defs) { defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); svg.prepend(defs); }
-
-      // 패턴 생성
-      const pat = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
-      pat.setAttribute('id', svgId);
-      pat.setAttribute('patternUnits', 'objectBoundingBox');
-      pat.setAttribute('width', '1');
-      pat.setAttribute('height', '1');
-
-      const img = document.createElementNS('http://www.w3.org/2000/svg', 'image');
-      img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', flagPng);
-      img.setAttribute('preserveAspectRatio', 'xMidYMid slice');
-      img.setAttribute('width', '100%');
-      img.setAttribute('height', '100%');
-
-      pat.appendChild(img);
-      defs.appendChild(pat);
-
-      // 실제 폴리곤 path들에 fill 적용
-      const paths = rec.layer.getElement()?.querySelectorAll('path');
-      paths?.forEach(p => {
-        p.setAttribute('fill', fillUrl);
-        p.setAttribute('stroke', '#111');
-        p.setAttribute('stroke-width', '2');
-      });
-    } catch (e) { /* 실패시 하이라이트만 유지 */ }
+      if (flagPng) {
+        const center = getCentroidLatLng(rec);
+        const icon = L.icon({
+          iconUrl: flagPng,
+          iconSize: [48, 32],
+          iconAnchor: [24, 16]
+        });
+        L.marker(center, { icon }).addTo(map);
+      }
+    } catch {}
   }
+}
 
   // ====== 라운드 진행 ======
   async function nextQuestion() {
