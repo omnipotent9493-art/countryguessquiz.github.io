@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>세계지도 국가 맞히기 퀴즈</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans KR", Arial, sans-serif; }
+    #app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; }
+    header, footer { padding: 10px 14px; }
+    header { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .badge { background: #eee; border-radius: 10px; padding: 4px 10px; font-size: 12px; }
+    #map { width: 100%; height: 100%; }
+    .panel { display: grid; gap: 8px; padding: 10px 14px; background: #fafafa; border-top: 1px solid #eaeaea; }
+    .question { font-weight: 700; }
+    .choices { display: grid; gap: 8px; grid-template-columns: repeat(2,minmax(0,1fr)); }
+    button.choice {
+      padding: 10px; border: 1px solid #ddd; border-radius: 10px; cursor: pointer; font-size: 15px; background: white;
+    }
+    button.choice:hover { border-color: #aaa; }
+    .result { min-height: 24px; font-weight: 600; }
+    .controls { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .btn {
+      padding: 8px 12px; border-radius: 10px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-weight: 600;
+    }
+    .btn.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+    .progress { height: 8px; background: #eee; border-radius: 999px; overflow: hidden; }
+    .bar { height: 100%; width: 0%; background: #1a73e8; transition: width .3s; }
+    .tiny { font-size: 12px; color: #666; }
+    @media (max-width: 640px) { .choices { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="badge">🌍 세계지도 국가 맞히기</div>
+      <div class="badge" id="scoreBadge">점수 0</div>
+      <div class="badge" id="roundBadge">문제 0 / 10</div>
+      <div class="badge" id="streakBadge">연속정답 0</div>
+    </header>
+
+    <div id="map"></div>
+
+    <div class="panel">
+      <div class="progress"><div class="bar" id="progressBar"></div></div>
+      <div class="question" id="question">이 나라가 어디일까요?</div>
+      <div class="choices" id="choices"></div>
+      <div class="result" id="result"></div>
+      <div class="controls">
+        <div class="tiny" id="hintArea">힌트: 대륙 힌트 보이기 🔍</div>
+        <div>
+          <button class="btn" id="btnHint">힌트</button>
+          <button class="btn primary" id="btnNext" disabled>다음 문제</button>
+          <button class="btn" id="btnRestart">처음부터</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="tiny">
+      팁: 정답을 고르면 지도에 **강조**가 유지되고, “다음 문제”를 누르면 새 국가로 자동 이동합니다.
+    </footer>
+  </div>
+
+  <!-- Leaflet & TopoJSON -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+
+  <script>
+    // ====== 설정값 ======
+    const TOTAL_QUESTIONS = 10;      // 한 판에 낼 문제 수
+    const CHOICES_COUNT   = 4;       // 보기 개수
+    const HIGHLIGHT_COLOR = "#ff5722";
+
+    // ====== 전역 상태 ======
+    let map, countryLayer;
+    let allFeatures = [];            // {feature, name, continent, id}
+    let remainingIds = [];           // 아직 안 낸 국가 id 목록
+    let current = null;              // 현재 문제 {id, name, continent, layer}
+    let score = 0, round = 0, streak = 0;
+
+    // ====== UI 참조 ======
+    const scoreBadge   = document.getElementById("scoreBadge");
+    const roundBadge   = document.getElementById("roundBadge");
+    const streakBadge  = document.getElementById("streakBadge");
+    const progressBar  = document.getElementById("progressBar");
+    const choicesEl    = document.getElementById("choices");
+    const resultEl     = document.getElementById("result");
+    const hintArea     = document.getElementById("hintArea");
+    const btnHint      = document.getElementById("btnHint");
+    const btnNext      = document.getElementById("btnNext");
+    const btnRestart   = document.getElementById("btnRestart");
+    const questionEl   = document.getElementById("question");
+
+    // ====== 유틸 ======
+    const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+    const sample  = (arr, n) => shuffle(arr.slice()).slice(0, n);
+
+    function updateBadges() {
+      scoreBadge.textContent  = `점수 ${score}`;
+      roundBadge.textContent  = `문제 ${round} / ${TOTAL_QUESTIONS}`;
+      streakBadge.textContent = `연속정답 ${streak}`;
+      progressBar.style.width = `${(round / TOTAL_QUESTIONS) * 100}%`;
+    }
+
+    function setResult(text, ok) {
+      resultEl.textContent = text;
+      resultEl.style.color = ok ? "#0a7d2b" : "#c62828";
+    }
+
+    function resetStyles() {
+      countryLayer.setStyle(defaultStyle);
+    }
+
+    // ====== 지도 초기화 ======
+    const defaultStyle = {
+      weight: 0.7, color: "#999",
+      fillColor: "#dfe7ef", fillOpacity: 0.7
+    };
+
+    const highlightStyle = {
+      weight: 2, color: "#111",
+      fillColor: HIGHLIGHT_COLOR, fillOpacity: 0.7
+    };
+
+    function initMap() {
+      map = L.map("map", { zoomSnap: 0.1, worldCopyJump: false, minZoom: 1.5 });
+      // 베이스(그레이 캔버스 느낌)
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: "&copy; OpenStreetMap"
+      }).addTo(map);
+      map.setView([20, 0], 2);
+    }
+
+    async function loadData() {
+      // world-atlas TopoJSON → GeoJSON 변환
+      const topo = await fetch("https://unpkg.com/world-atlas@2/countries-110m.json").then(r => r.json());
+      const geo  = topojson.feature(topo, topo.objects.countries);
+
+      // 일부 배포본은 country name이 별도 테이블로 분리돼 있음
+      // 여기서는 국가명 매핑용 테이블을 추가로 불러옴
+      // source: https://unpkg.com/world-atlas@2/ (names-110m.json)
+      let idToName = {};
+      try {
+        const names = await fetch("https://unpkg.com/world-atlas@2/world/110m.json").then(r => r.json());
+        // world/110m.json에는 countries, land 등 포함
+        // countries 배열에 {id, name}가 포함된 변형본이 있어 이를 우선 시도
+        if (names.countries && Array.isArray(names.countries)) {
+          names.countries.forEach(c => { if (c.id != null && c.name) idToName[String(c.id)] = c.name; });
+        }
+      } catch(e) {
+        // fallback: 그냥 id 문자열 그대로 쓰되, 나중에 걸러짐
+      }
+
+      countryLayer = L.geoJSON(geo, {
+        style: defaultStyle,
+        onEachFeature: (feature, layer) => {
+          const id   = String(feature.id ?? (feature.properties && feature.properties.id) ?? "");
+          const name = feature.properties && (feature.properties.name || feature.properties.name_long || feature.properties.admin);
+          const finalName = name || idToName[id] || null;
+
+          if (!finalName) return; // 이름 없는 경우 스킵
+          const rec = {
+            id, name: finalName, continent: feature.properties && (feature.properties.continent || feature.properties.region_un || ""),
+            feature, layer
+          };
+          allFeatures.push(rec);
+        }
+      }).addTo(map);
+
+      // 남극, 영해 등 학습용 제외(이름 기준 대강 필터)
+      allFeatures = allFeatures.filter(r =>
+        r.name && !/antarctica/i.test(r.name) && r.name.length >= 3
+      );
+
+      remainingIds = allFeatures.map(r => r.id);
+    }
+
+    function fitAndHighlight(rec) {
+      resetStyles();
+      rec.layer.setStyle(highlightStyle);
+      try {
+        const bounds = rec.layer.getBounds();
+        map.fitBounds(bounds.pad(0.5), { animate: true, duration: 0.6 });
+      } catch (e) {
+        // MultiPolygon이 너무 작으면 기본 줌
+        map.setView([20, 0], 2);
+      }
+    }
+
+    function nextQuestion() {
+      if (round >= TOTAL_QUESTIONS || remainingIds.length === 0) {
+        finish();
+        return;
+      }
+      round++;
+      updateBadges();
+      resultEl.textContent = "";
+      btnNext.disabled = true;
+
+      // 후보 중 하나를 뽑음
+      const pickId = remainingIds.splice(Math.floor(Math.random() * remainingIds.length), 1)[0];
+      const rec = allFeatures.find(r => r.id === pickId);
+      current = rec;
+
+      // 보기 생성 (정답 + 랜덤 오답 n-1)
+      const others = allFeatures.filter(r => r.id !== rec.id);
+      const distractors = sample(others, CHOICES_COUNT - 1);
+      const options = shuffle([rec, ...distractors]).map(r => r.name);
+
+      // 지도 강조 & UI 그리기
+      fitAndHighlight(rec);
+      questionEl.textContent = "이 나라가 어디일까요?";
+      renderChoices(options, rec.name);
+
+      // 힌트 영역 초기화
+      hintArea.textContent = "힌트: 대륙 힌트 보이기 🔍";
+    }
+
+    function renderChoices(options, answerName) {
+      choicesEl.innerHTML = "";
+      options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.className = "choice";
+        btn.textContent = opt;
+        btn.onclick = () => {
+          Array.from(document.querySelectorAll("button.choice")).forEach(b => b.disabled = true);
+          const correct = (opt === answerName);
+          if (correct) {
+            score += 10;
+            streak += 1;
+            setResult(`정답! ✅ ${answerName}`, true);
+          } else {
+            streak = 0;
+            setResult(`오답! ❌ 정답은 ${answerName}`, false);
+          }
+          updateBadges();
+          btnNext.disabled = false;
+        };
+        choicesEl.appendChild(btn);
+      });
+    }
+
+    function finish() {
+      resetStyles();
+      map.setView([20, 0], 2);
+      questionEl.textContent = "게임 종료!";
+      choicesEl.innerHTML = "";
+      setResult(`최종 점수: ${score}점 / 최대 ${TOTAL_QUESTIONS * 10}점`, true);
+      btnNext.disabled = true;
+    }
+
+    function restart() {
+      score = 0; round = 0; streak = 0;
+      remainingIds = allFeatures.map(r => r.id);
+      updateBadges();
+      nextQuestion();
+    }
+
+    // ====== 이벤트 바인딩 ======
+    btnNext.onclick = nextQuestion;
+    btnRestart.onclick = () => restart();
+    btnHint.onclick = () => {
+      if (!current) return;
+      const text = current.continent ? `대륙: ${current.continent}` : "대륙 정보 없음";
+      hintArea.textContent = `힌트: ${text}`;
+    };
+
+    // ====== 런타임 시작 ======
+    (async function main() {
+      initMap();
+      await loadData();
+      restart();
+    })();
+  </script>
+</body>
+</html>
